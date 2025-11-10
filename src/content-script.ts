@@ -1,5 +1,12 @@
-import { getRenderedDescriptionHtml } from './utils/dom'
+import {
+  getFocusedEditor,
+  getHtmlFromEditor,
+  getRenderedDescriptionHtml,
+  watchEditorFocus
+} from './utils/dom'
 import { htmlToGfm } from './converter'
+
+watchEditorFocus()
 
 async function copyToClipboard(text: string) {
   try {
@@ -55,27 +62,49 @@ function ensureActionBarButton(bar: HTMLElement) {
 
   const sh = mount.attachShadow({ mode: 'open' })
   const btn = document.createElement('button')
-  btn.title = '説明をGFMでコピー'
-  btn.setAttribute('aria-label', '説明をGFMでコピー')
+  btn.title = 'エディタまたは説明をGFMでコピー'
   btn.style.width = '28px'
   btn.style.height = '28px'
   btn.style.border = 'none'
   btn.style.background = 'transparent'
   btn.style.cursor = 'pointer'
   btn.style.borderRadius = '6px'
-  btn.style.display = 'inline-flex'
-  btn.style.alignItems = 'center'
-  btn.style.justifyContent = 'center'
-  btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+  btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
     <path d="M16 1H8a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2h2a2 2 0 0 0 2-2V7l-4-6zM8 3h8v2H8V3zm6 17H4V7h2v8h8v5zm2-4H8V7h6V2.5L20 8v6z"></path>
   </svg>`
 
   btn.addEventListener('click', async () => {
-    const html = getRenderedDescriptionHtml()
-    if (!html) { showToast('説明が見つかりません'); return }
-    const gfm = htmlToGfm(html)
-    await copyToClipboard(gfm)
-    showToast('説明をGFMでコピーしました')
+    const sel = window.getSelection()
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      const range = sel.getRangeAt(0)
+      const c = document.createElement('div')
+      c.appendChild(range.cloneContents())
+      const gfm = htmlToGfm(c.innerHTML)
+      await copyToClipboard(gfm)
+      showToast('選択範囲をGFMでコピーしました')
+      return
+    }
+
+    const editor = getFocusedEditor()
+    if (editor) {
+      const htmlOrPre = getHtmlFromEditor(editor)
+      if (htmlOrPre && htmlOrPre.trim()) {
+        const gfm = htmlToGfm(htmlOrPre)
+        await copyToClipboard(gfm)
+        showToast('エディタ内容をGFMでコピーしました')
+        return
+      }
+    }
+
+    const desc = getRenderedDescriptionHtml()
+    if (desc && desc.trim()) {
+      const gfm = htmlToGfm(desc)
+      await copyToClipboard(gfm)
+      showToast('説明をGFMでコピーしました')
+      return
+    }
+
+    showToast('コピー対象が見つかりません')
   })
 
   sh.appendChild(btn)
@@ -84,8 +113,6 @@ function ensureActionBarButton(bar: HTMLElement) {
 
 function bootstrap() {
   findActionBars().forEach(ensureActionBarButton)
-
-  // SPA遷移対応（アクションバーだけ監視）
   const mo = new MutationObserver((records) => {
     for (const r of records) {
       for (const n of Array.from(r.addedNodes)) {

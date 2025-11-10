@@ -1,4 +1,5 @@
 import TurndownService from 'turndown'
+// @ts-ignore
 import { gfm } from 'turndown-plugin-gfm'
 
 let td: TurndownService | null = null
