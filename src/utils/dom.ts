@@ -1,137 +1,126 @@
-let lastFocusedEditor: HTMLElement | null = null
+// ====== 自社DOM（優先） ======
+// コメント行のアクションバー: issue-comment-base ui comment custom-comment 84361 comment-actions
+// 数字クラス(例: 84361)は可変なので無視し、その他のクラスが全部付いた要素を狙う
+const COMMENT_ACTION_BAR_STRICT =
+  '.issue-comment-base.ui.comment.custom-comment.comment-actions'
 
-// エディタのフォーカスを監視（コメント入力含む）
-export function watchEditorFocus() {
-  addEventListener('focusin', (e) => {
-    const t = e.target as HTMLElement | null
-    if (!t) return
-    if (t.isContentEditable || t.tagName === 'TEXTAREA') {
-      lastFocusedEditor = t
-      return
-    }
-    // コメント入力の内側にある要素 → 最寄りの contenteditable を覚える
-    const ce = t.closest<HTMLElement>('[data-testid*="comment"], [data-test-id*="comment"] [contenteditable="true"], [contenteditable="true"]')
-    if (ce && ce.isContentEditable) {
-      lastFocusedEditor = ce
-    }
-  })
-}
+// 説明のヘッダ行: issue-view-base common description heading-wrapper
+const DESC_HEADING_WRAPPER_STRICT =
+  '.issue-view-base.common.description.heading-wrapper'
 
-export function getFocusedEditor(): HTMLElement | null {
-  const a = document.activeElement as HTMLElement | null
-  if (a && (a.isContentEditable || a.tagName === 'TEXTAREA')) return a
-  return lastFocusedEditor
-}
-
-// エディタからHTML取得（textareaは<pre>で包む）
-export function getHtmlFromEditor(el: HTMLElement): string | null {
-  if (el.isContentEditable) return el.innerHTML
-  if (el.tagName === 'TEXTAREA') {
-    const v = (el as HTMLTextAreaElement).value
-    return v ? `<pre>${escapeHtml(v)}</pre>` : ''
-  }
-  return null
-}
-
-// --- 説明（表示状態） ---
-export function getRenderedDescriptionHtml(): string | null {
-  const selectors = [
-    '[data-test-id="issue.views.field.rich-text.description"] [data-testid="issue-field-renderer-content"]',
-    '[data-test-id="issue.views.field.rich-text.description"] [data-testid="rendered-content"]',
-    '[data-test-id="issue.views.field.rich-text.description"]'
-  ]
-  for (const sel of selectors) {
-    const el = document.querySelector<HTMLElement>(sel)
-    if (el && el.innerHTML.trim()) return el.innerHTML
-  }
-  // fallback: 見出しから辿る
-  const headings = Array.from(document.querySelectorAll<HTMLElement>('h2, h3'))
-  const h = headings.find((el) => /^(説明|Description)$/i.test(el.textContent || ''))
-  const next = h?.parentElement?.querySelector<HTMLElement>('div, [data-testid]')
-  return next?.innerHTML?.trim() ? next.innerHTML : null
-}
-
-// --- コメント（表示状態） ---
-// コメントアイテム候補（新旧UIを広めに）
+// ====== 既存の汎用フォールバック ======
 const COMMENT_ITEM_SEL = [
-  '[data-testid="issue-view-comments-list"] [data-testid="issue-view-comment"]',
-  '[data-testid*="issue-activity"] [data-testid*="comment"]',
-  '[data-test-id*="issue.activity"][data-test-id*="comment"]',
-  '[data-test-id*="comment-item"]',
+  '[data-testid="issue-view-comment"]',
   '[data-testid*="comment-item"]',
-  // 汎用フォールバック
-  '[data-test-id*="comment"]',
-  '[data-testid*="comment"]'
+  '[data-test-id*="comment-item"]',
+  '[data-test-id*="comment"][data-testid]'
 ]
 
-// コメント本文候補
 const COMMENT_BODY_SEL = [
   '[data-testid="issue-field-renderer-content"]',
   '[data-testid="rendered-content"]',
   '[data-testid*="renderer"]',
   '.ak-renderer-document',
-  'article',
-  '.ProseMirror', // 稀にそのまま
-  'div'
+  'article'
 ]
 
-// selection/focus から一番近いコメント本文を拾う
-export function getNearestCommentHtmlFrom(node: Node | null): string | null {
-  if (!node) return null
-  const el = node instanceof HTMLElement ? node : (node.parentElement as HTMLElement | null)
-  if (!el) return null
+// ---- 説明：ブロック・本文・バー ----
+export function getRenderedDescriptionBlock(): HTMLElement | null {
+  const strict = document.querySelector<HTMLElement>(DESC_HEADING_WRAPPER_STRICT)
+  if (strict) return strict.closest<HTMLElement>('[data-testid],[data-test-id]') || strict
 
-  // 自分自身が本文のとき
-  for (const s of COMMENT_BODY_SEL) {
-    if (el.matches?.(s) && el.innerHTML?.trim()) return el.innerHTML
+  const wrappers = [
+    '[data-test-id="issue.views.field.rich-text.description"]',
+    '[data-testid="issue.views.field.rich-text.description"]'
+  ]
+  for (const w of wrappers) {
+    const el = document.querySelector<HTMLElement>(w)
+    if (el) return el
   }
-
-  // 祖先方向にコメントアイテムを探し本文抽出
-  const item = el.closest<HTMLElement>(COMMENT_ITEM_SEL.join(','))
-  if (item) {
-    const body = queryFirstHtml(item, COMMENT_BODY_SEL)
-    if (body) return body
-  }
-
-  // 近傍：直近の兄弟や親の下を軽く探す
-  const parent = el.closest<HTMLElement>('section, article, div, [data-testid], [data-test-id]')
-  if (parent) {
-    const near = queryFirstHtml(parent, COMMENT_BODY_SEL)
-    if (near) return near
-  }
-
-  return null
+  const headings = Array.from(document.querySelectorAll<HTMLElement>('h2, h3'))
+  const h = headings.find((n) => /^(説明|Description)$/i.test(n.textContent || ''))
+  return h ? (h.closest('[data-testid],[data-test-id]') || h.parentElement || h) : null
 }
 
-// 最新の（空でない）コメント本文
-export function getRenderedLatestCommentHtml(): string | null {
-  for (const isel of COMMENT_ITEM_SEL) {
-    const items = Array.from(document.querySelectorAll<HTMLElement>(isel)).reverse()
-    for (const item of items) {
-      const body = queryFirstHtml(item, COMMENT_BODY_SEL)
-      if (body) return body
-    }
+export function getDescriptionContentHtml(block: HTMLElement): string | null {
+  const cands = [
+    '[data-testid="issue-field-renderer-content"]',
+    '[data-testid="rendered-content"]',
+    '.ak-renderer-document',
+    'article'
+  ]
+  for (const s of cands) {
+    const el = block.querySelector<HTMLElement>(s)
+    if (el?.innerHTML?.trim()) return el.innerHTML
   }
   return null
 }
 
-// コメントアイテム列挙（個別ボタン用で使いたい場合）
-export function findCommentItems(): HTMLElement[] {
+export function findDescriptionActionBar(block: HTMLElement): HTMLElement | null {
+  // 1) 自社DOMのヘッダ行
+  const strictBar =
+    block.matches(DESC_HEADING_WRAPPER_STRICT)
+      ? block
+      : block.querySelector<HTMLElement>(DESC_HEADING_WRAPPER_STRICT)
+  if (strictBar) return strictBar
+
+  // 2) block 内の toolbar
+  const tb = block.querySelector<HTMLElement>('[role="toolbar"]')
+  if (tb) return tb
+
+  // 3) data-testid 系
+  const acts = block.querySelector<HTMLElement>('[data-testid$="actions"], [data-test-id$="actions"]')
+  if (acts) return acts
+
+  // 4) 緩いフォールバック
+  const loose = block.querySelector<HTMLElement>('[data-testid*="actions"], [data-test-id*="actions"], [aria-label="More actions"]')
+  return loose || null
+}
+
+// ---- コメント：アイテム・本文・バー ----
+export function findAllCommentItems(): HTMLElement[] {
   const set = new Set<HTMLElement>()
+  // 自社DOMでは comment-actions の親がコメントカードの場合がある
+  document.querySelectorAll<HTMLElement>(COMMENT_ACTION_BAR_STRICT).forEach((bar) => {
+    const item = bar.closest<HTMLElement>('.issue-comment-base.ui.comment.custom-comment') || bar
+    set.add(item)
+  })
   for (const s of COMMENT_ITEM_SEL) {
     document.querySelectorAll<HTMLElement>(s).forEach((n) => set.add(n))
   }
   return Array.from(set)
 }
 
-function queryFirstHtml(root: HTMLElement, sels: string[]): string | null {
-  for (const s of sels) {
-    const el = root.querySelector<HTMLElement>(s)
-    if (el && el.innerHTML && el.innerHTML.trim()) return el.innerHTML
+export function getCommentBodyHtml(item: HTMLElement): string | null {
+  for (const s of COMMENT_BODY_SEL) {
+    const el = item.querySelector<HTMLElement>(s)
+    if (el?.innerHTML?.trim()) return el.innerHTML
   }
-  return null
+  // 自社DOM: 本文が article 等直下にあるケース
+  const fallback = item.querySelector<HTMLElement>('article, .ak-renderer-document, [data-testid*="content"]')
+  return fallback?.innerHTML?.trim() ? fallback.innerHTML : null
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))
+export function findCommentActionBar(item: HTMLElement): HTMLElement | null {
+  // 1) 自社DOMの comment-actions を最優先
+  const strict = item.querySelector<HTMLElement>(COMMENT_ACTION_BAR_STRICT)
+  if (strict) return strict
+
+  // 2) header 内 toolbar / group
+  const header = item.querySelector<HTMLElement>('header')
+  if (header) {
+    const tb = header.querySelector<HTMLElement>('[role="toolbar"], [role="group"]')
+    if (tb) return tb
+    const acts = header.querySelector<HTMLElement>('[data-testid$="actions"], [data-test-id$="actions"]')
+    if (acts) return acts
+  }
+  // 3) item直下の toolbar / actions
+  const tb2 = item.querySelector<HTMLElement>('[role="toolbar"], [role="group"]')
+  if (tb2) return tb2
+  const acts2 = item.querySelector<HTMLElement>('[data-testid$="actions"], [data-test-id$="actions"]')
+  if (acts2) return acts2
+
+  // 4) 緩いフォールバック
+  const loose = item.querySelector<HTMLElement>('[data-testid*="actions"], [data-test-id*="actions"], [aria-label="More actions"]')
+  return loose || null
 }
