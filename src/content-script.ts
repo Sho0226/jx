@@ -136,7 +136,11 @@ function makeIconButton(title: string, icon: string, onClick: () => void) {
   btn.style.alignItems = "center";
   btn.style.justifyContent = "center";
   btn.innerHTML = icon;
-  btn.addEventListener("click", onClick);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onClick();
+  });
   sh.appendChild(btn);
   return mount;
 }
@@ -212,11 +216,18 @@ function findDescriptionEditorFromBar(bar: HTMLElement): HTMLElement | null {
 }
 
 function ensureDescriptionButton() {
-  const bar = document.querySelector<HTMLElement>(DESC_BAR_SEL);
+  // 折りたたみボタンのあるヘッダー領域を探す
+  const toggleButton = document.querySelector<HTMLElement>(
+    '[data-testid="issue.views.common.collapsible-section.DESCRIPTION.toggle"]'
+  );
+
+  if (!toggleButton) return;
+
+  const headerContainer = toggleButton.closest<HTMLElement>('[class*="css-"]');
   if (
-    !bar ||
-    processedBars.has(bar) ||
-    bar.querySelector("[data-jira-gfm-copy]")
+    !headerContainer ||
+    processedBars.has(headerContainer) ||
+    headerContainer.querySelector("[data-jira-gfm-copy]")
   )
     return;
 
@@ -229,9 +240,10 @@ function ensureDescriptionButton() {
 
   // JIRA形式でコピーボタン
   const jiraButton = makeIconButton("JIRA形式でコピー", COPY_ICON, async () => {
-    const rendererRoot = findDescriptionRendererRootFromBar(bar);
+    const descBar = document.querySelector<HTMLElement>(DESC_BAR_SEL);
+    const rendererRoot = descBar ? findDescriptionRendererRootFromBar(descBar) : null;
     const rendererHtml = pickRendererHtml(rendererRoot);
-    const pmEl = rendererHtml ? null : findDescriptionEditorFromBar(bar);
+    const pmEl = rendererHtml ? null : (descBar ? findDescriptionEditorFromBar(descBar) : null);
     const html = rendererHtml ?? pmEl?.innerHTML?.trim();
 
     if (!html) {
@@ -244,9 +256,10 @@ function ensureDescriptionButton() {
 
   // GitHub形式でコピーボタン
   const githubButton = makeIconButton("GitHub形式でコピー", GITHUB_ICON, async () => {
-    const rendererRoot = findDescriptionRendererRootFromBar(bar);
+    const descBar = document.querySelector<HTMLElement>(DESC_BAR_SEL);
+    const rendererRoot = descBar ? findDescriptionRendererRootFromBar(descBar) : null;
     const rendererHtml = pickRendererHtml(rendererRoot);
-    const pmEl = rendererHtml ? null : findDescriptionEditorFromBar(bar);
+    const pmEl = rendererHtml ? null : (descBar ? findDescriptionEditorFromBar(descBar) : null);
     const html = rendererHtml ?? pmEl?.innerHTML?.trim();
 
     if (!html) {
@@ -260,8 +273,10 @@ function ensureDescriptionButton() {
 
   container.appendChild(jiraButton);
   container.appendChild(githubButton);
-  bar.appendChild(container);
-  processedBars.add(bar);
+
+  // ボタンをヘッダーコンテナに追加
+  headerContainer.appendChild(container);
+  processedBars.add(headerContainer);
 }
 
 /* -------------------- コメント（Comment actions） -------------------- */
