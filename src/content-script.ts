@@ -24,6 +24,79 @@ async function copyToClipboard(text: string) {
   }
 }
 
+function cleanHtmlForJira(html: string): string {
+  // 一時的なdiv要素を作成してHTMLをパース
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+
+  // JIRAのレンダラー特有のラッパー要素を除去
+  const removeWrappers = (parent: Element) => {
+    const children = Array.from(parent.children);
+
+    for (let i = children.length - 1; i >= 0; i--) {
+      const node = children[i];
+      const className = node.className || '';
+      const nodeName = node.nodeName.toLowerCase();
+
+      // 不要な要素を削除
+      if (nodeName === 'style' || nodeName === 'script') {
+        node.remove();
+        continue;
+      }
+
+      // JIRAレンダラーのラッパークラスの場合、子要素を展開
+      const isWrapper =
+        className.includes('ak-renderer') ||
+        /^css-/.test(className) ||
+        /\bcss-\w+/.test(className);
+
+      if (isWrapper && (nodeName === 'div' || nodeName === 'span')) {
+        // 子要素を取得
+        const childNodes = Array.from(node.childNodes);
+
+        // 子要素を親の同じ位置に挿入
+        childNodes.forEach(child => {
+          parent.insertBefore(child, node);
+        });
+
+        // 元のノードを削除
+        node.remove();
+      } else {
+        // それ以外の要素は再帰的に処理
+        removeWrappers(node);
+      }
+    }
+  };
+
+  removeWrappers(temp);
+
+  const cleaned = temp.innerHTML.trim();
+  console.log('=== Cleaned HTML for JIRA ===');
+  console.log('Original length:', html.length);
+  console.log('Cleaned length:', cleaned.length);
+  console.log('Cleaned HTML (first 500 chars):', cleaned.substring(0, 500));
+
+  return cleaned;
+}
+
+async function copyAsJiraNative(html: string) {
+  try {
+    // HTMLをクリーンアップ
+    const cleanedHtml = cleanHtmlForJira(html);
+
+    // JIRAのネイティブコピーを再現: HTMLとプレーンテキストの両方をクリップボードに書き込む
+    const clipboardItem = new ClipboardItem({
+      'text/html': new Blob([cleanedHtml], { type: 'text/html' }),
+      'text/plain': new Blob([cleanedHtml], { type: 'text/plain' })
+    });
+    await navigator.clipboard.write([clipboardItem]);
+  } catch (err) {
+    console.error('Failed to copy as JIRA native format:', err);
+    // フォールバック: 通常のコピー
+    await copyToClipboard(html);
+  }
+}
+
 function showToast(msg: string) {
   const host = document.createElement("div");
   host.style.position = "fixed";
@@ -43,7 +116,7 @@ function showToast(msg: string) {
   setTimeout(() => host.remove(), 1200);
 }
 
-function makeIconButton(title: string, onClick: () => void) {
+function makeIconButton(title: string, icon: string, onClick: () => void) {
   const mount = document.createElement("span");
   mount.setAttribute("data-jira-gfm-copy", "1");
   mount.style.display = "inline-flex";
@@ -53,8 +126,8 @@ function makeIconButton(title: string, onClick: () => void) {
   const sh = mount.attachShadow({ mode: "open" });
   const btn = document.createElement("button");
   btn.title = title;
-  btn.style.width = "24px";
-  btn.style.height = "24px";
+  btn.style.width = "28px";
+  btn.style.height = "28px";
   btn.style.border = "none";
   btn.style.background = "transparent";
   btn.style.cursor = "pointer";
@@ -62,14 +135,22 @@ function makeIconButton(title: string, onClick: () => void) {
   btn.style.display = "inline-flex";
   btn.style.alignItems = "center";
   btn.style.justifyContent = "center";
-  btn.innerHTML = `
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M16 1H8a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2h2a2 2 0 0 0 2-2V7l-4-6zM8 3h8v2H8V3zm6 17H4V7h2v8h8v5zm2-4H8V7h6V2.5L20 8v6z"></path>
-    </svg>`;
+  btn.innerHTML = icon;
   btn.addEventListener("click", onClick);
   sh.appendChild(btn);
   return mount;
 }
+
+// アイコン定義
+const COPY_ICON = `
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M16 1H8a2 2 0 0 0-2 2v2H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2h2a2 2 0 0 0 2-2V7l-4-6zM8 3h8v2H8V3zm6 17H4V7h2v8h8v5zm2-4H8V7h6V2.5L20 8v6z"></path>
+  </svg>`;
+
+const GITHUB_ICON = `
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+  </svg>`;
 
 /* -------------------- 説明（Description） -------------------- */
 
@@ -100,9 +181,10 @@ function findDescriptionRendererRootFromBar(
 function pickRendererHtml(root: HTMLElement | null): string | null {
   if (!root) return null;
   const cands = [
-    '[data-testid="issue-field-renderer-content"]',
-    '[data-testid="rendered-content"]',
+    ".ak-renderer-wrapper",
     ".ak-renderer-document",
+    '[data-testid="rendered-content"]',
+    '[data-testid*="renderer"]',
     "article",
     "div",
   ];
@@ -138,7 +220,30 @@ function ensureDescriptionButton() {
   )
     return;
 
-  const mount = makeIconButton("説明をGFMでコピー", async () => {
+  // コンテナを作成
+  const container = document.createElement("div");
+  container.style.display = "inline-flex";
+  container.style.alignItems = "center";
+  container.style.marginLeft = "auto";
+  container.style.gap = "4px";
+
+  // JIRA形式でコピーボタン
+  const jiraButton = makeIconButton("JIRA形式でコピー", COPY_ICON, async () => {
+    const rendererRoot = findDescriptionRendererRootFromBar(bar);
+    const rendererHtml = pickRendererHtml(rendererRoot);
+    const pmEl = rendererHtml ? null : findDescriptionEditorFromBar(bar);
+    const html = rendererHtml ?? pmEl?.innerHTML?.trim();
+
+    if (!html) {
+      showToast("説明が見つかりません");
+      return;
+    }
+    await copyAsJiraNative(html);
+    showToast("JIRA形式でコピーしました");
+  });
+
+  // GitHub形式でコピーボタン
+  const githubButton = makeIconButton("GitHub形式でコピー", GITHUB_ICON, async () => {
     const rendererRoot = findDescriptionRendererRootFromBar(bar);
     const rendererHtml = pickRendererHtml(rendererRoot);
     const pmEl = rendererHtml ? null : findDescriptionEditorFromBar(bar);
@@ -150,76 +255,36 @@ function ensureDescriptionButton() {
     }
     const gfm = htmlToGfm(html);
     await copyToClipboard(gfm);
-    showToast("説明をGFMでコピーしました");
+    showToast("GitHub形式でコピーしました");
   });
 
-  bar.appendChild(mount);
+  container.appendChild(jiraButton);
+  container.appendChild(githubButton);
+  bar.appendChild(container);
   processedBars.add(bar);
 }
 
 /* -------------------- コメント（Comment actions） -------------------- */
-/** アクション行から“前方（兄・叔父・祖父の兄弟）”を優先して本文を探す */
-function findNearestCommentBodyFromBar(bar: HTMLElement): HTMLElement | null {
-  const BODY_SEL = [
-    '[data-testid="issue-field-renderer-content"]',
-    '[data-testid="rendered-content"]',
-    '[data-testid*="renderer"]',
-    ".ak-renderer-document",
-    "article",
-  ].join(",");
+/** アクションバーから直接的にコメント本文を取得 */
+function findCommentBodyFromBar(bar: HTMLElement): HTMLElement | null {
+  // アクションバーは footer 内にあるので、footer を取得
+  const footer = bar.closest<HTMLElement>('[data-testid$="-footer"]');
+  if (!footer) return null;
 
-  // 1) 同じ親の「前の兄弟」たちを上から順にチェック（最大 8 個）
-  let p: HTMLElement | null = bar.parentElement as HTMLElement | null;
-  if (p) {
-    let prev: HTMLElement | null =
-      bar.previousElementSibling as HTMLElement | null;
-    let hop = 0;
-    while (prev && hop < 8) {
-      const hit = prev.querySelector<HTMLElement>(BODY_SEL);
-      if (hit?.innerHTML?.trim()) return hit;
-      prev = prev.previousElementSibling as HTMLElement | null;
-      hop++;
-    }
-  }
+  // footer の親要素が ak-comment
+  const akComment = footer.parentElement;
+  if (!akComment) return null;
 
-  // 2) 親の「前の兄弟」を遡って探す（最大 4 親 * 各 8 兄弟）
-  let ancestor: HTMLElement | null = bar.parentElement as HTMLElement | null;
-  let depth = 0;
-  while (ancestor && depth < 4) {
-    let sib: HTMLElement | null =
-      ancestor.previousElementSibling as HTMLElement | null;
-    let hop = 0;
-    while (sib && hop < 8) {
-      const hit = sib.querySelector<HTMLElement>(BODY_SEL);
-      if (hit?.innerHTML?.trim()) return hit;
-      sib = sib.previousElementSibling as HTMLElement | null;
-      hop++;
-    }
-    ancestor = ancestor.parentElement as HTMLElement | null;
-    depth++;
-  }
+  // ak-comment 内の body を取得
+  const body = akComment.querySelector<HTMLElement>('[data-testid$="-body"]');
+  if (!body) return null;
 
-  // 3) 同一“コメントカード”らしき領域を広めに探す（data-testid の共通 prefix で囲われているケース）
-  const card =
-    bar.closest<HTMLElement>(
-      '[data-testid^="issue-comment-base.ui.comment.custom-comment."]'
-    ) ||
-    bar.closest<HTMLElement>('[data-testid*="comment"]') ||
-    bar.closest<HTMLElement>(
-      '[role="group"],[role="article"],[data-component-selector]'
-    );
-  if (card) {
-    const hit = card.querySelector<HTMLElement>(BODY_SEL);
-    if (hit?.innerHTML?.trim()) return hit;
-  }
+  // body 内の renderer を取得（優先順位順）
+  const renderer = body.querySelector<HTMLElement>(
+    '.ak-renderer-wrapper, .ak-renderer-document, [data-testid*="renderer"]'
+  );
 
-  // 4) 最後のフォールバック：barの祖先の中を狭範囲検索
-  const near =
-    bar.closest<HTMLElement>(
-      '[data-testid],[role="group"],section,article,div'
-    ) || bar.parentElement;
-  const hit = near?.querySelector<HTMLElement>(BODY_SEL);
-  return hit?.innerHTML?.trim() ? hit : null;
+  return renderer || body;
 }
 
 function ensureCommentButtons() {
@@ -229,11 +294,33 @@ function ensureCommentButtons() {
       if (processedBars.has(bar) || bar.querySelector("[data-jira-gfm-copy]"))
         return;
 
-      const mount = makeIconButton("このコメントをGFMでコピー", async () => {
-        // 閲覧表示（renderer）の本文を“前方探索”で拾う
-        const bodyEl = findNearestCommentBodyFromBar(bar);
+      // JIRA形式でコピーボタン
+      const jiraButton = makeIconButton("JIRA形式でコピー", COPY_ICON, async () => {
+        const bodyEl = findCommentBodyFromBar(bar);
 
-        // 編集中なら ProseMirror も見る（コメント編集フォーム内）
+        const PM_SEL =
+          '#ak-editor-textarea.ProseMirror,[role="textbox"][contenteditable="true"][id="ak-editor-textarea"],[data-editor-id][contenteditable="true"].ProseMirror,[role="textbox"][contenteditable="true"].ProseMirror';
+        const formPM = bodyEl
+          ? null
+          : bar
+              .closest<HTMLElement>("form, [data-editor-content-component]")
+              ?.querySelector<HTMLElement>(PM_SEL) || null;
+
+        const html =
+          bodyEl?.innerHTML?.trim() || formPM?.innerHTML?.trim() || null;
+        if (!html) {
+          showToast("コメント本文が見つかりません");
+          return;
+        }
+
+        await copyAsJiraNative(html);
+        showToast("JIRA形式でコピーしました");
+      });
+
+      // GitHub形式でコピーボタン
+      const githubButton = makeIconButton("GitHub形式でコピー", GITHUB_ICON, async () => {
+        const bodyEl = findCommentBodyFromBar(bar);
+
         const PM_SEL =
           '#ak-editor-textarea.ProseMirror,[role="textbox"][contenteditable="true"][id="ak-editor-textarea"],[data-editor-id][contenteditable="true"].ProseMirror,[role="textbox"][contenteditable="true"].ProseMirror';
         const formPM = bodyEl
@@ -251,10 +338,11 @@ function ensureCommentButtons() {
 
         const gfm = htmlToGfm(html);
         await copyToClipboard(gfm);
-        showToast("コメントをGFMでコピーしました");
+        showToast("GitHub形式でコピーしました");
       });
 
-      bar.appendChild(mount);
+      bar.appendChild(jiraButton);
+      bar.appendChild(githubButton);
       processedBars.add(bar);
     });
 }
